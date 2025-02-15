@@ -1,8 +1,8 @@
 # Cloud Quest Infrastructure and Application Deployment
 
-![Secret Page Screenshot](result.png)
-
 This repository contains an automated infrastructure deployment solution using GitHub Actions to provision and manage a complete AWS infrastructure for the Cloud Quest application. The solution implements Infrastructure as Code (IaC) using Terraform and includes automated application deployment to Amazon EKS.
+
+![Secret Page Screenshot](result.png)
 
 ## Architecture Overview
 
