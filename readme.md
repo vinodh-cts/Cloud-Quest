@@ -16,7 +16,7 @@ The solution deploys:
 Before running the workflow, ensure you have:
 
 1. An AWS account and an IAM role with the necessary permissions, including an access key and secret key.
-2. GitHub Repository Secrets Configured:
+2. Configure the GitHub Repository Secrets as follows:
    - `AWS_ACCESS_KEY_ID`
    - `AWS_SECRET_ACCESS_KEY`
 3. An EC2 Key Pair created in your Target AWS Region.
@@ -41,6 +41,7 @@ Monitor costs associated with:
    - **Instance type**: Type of EC2 instance for worker nodes.
    - **ECR repository name**: Name of the ECR repository.
    - **S3 Bucket name**: Name of the S3 bucket for remote statefile storage
+5. Click "Run workflow".
 
 ## Workflow Parameters
 
