@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quest
+spec:
+  replicas: 1 
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: quest
+        image: PLACEHOLDER_IMAGE_NAME
+        ports:
+        - containerPort: 3000
+      nodeSelector:
+        app: frontend
