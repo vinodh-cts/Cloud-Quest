@@ -1,0 +1,134 @@
+name: Destruction of Cloud Quest Application and Infrastructure
+
+on:
+    workflow_dispatch:
+      inputs:
+        clustername:
+          description: 'Name of the EKS cluster'
+          required: true
+        region:
+          description: 'AWS region to deploy the cluster'
+          required: true
+        keypair_name:
+          description: 'Name of the EC2 keypair to be used'
+          required: true
+        instancetype:
+          description: 'Instance type for worker nodes (e.g.,"t3.medium", "t3.large")'
+          required: true
+          default: 't3.small'
+        ecr_repository_name:
+          description: 'Name of the ECR repository'
+          required: true
+        s3_bucket_name:
+          description: 'Name of the S3 bucket for remote statefile storage:'
+          required: true
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    # Checkout code
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Install AWS CLI
+    - name: Install AWS CLI
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+        aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws configure set region ${{ github.event.inputs.region }}
+        aws configure set output json
+
+    # Install eksctl
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/download/v0.76.0/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+
+    # Install kubectl
+    - name: Install kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/v1.24.0/bin/linux/amd64/kubectl"
+        sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+    # Install Helm
+    - name: Install Helm
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    # Install Terraform
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: latest
+
+    # Update kubeconfig for kubectl interaction with the EKS cluster
+    - name: Configure kubectl for EKS
+      run: |
+        aws eks --region ${{ github.event.inputs.region }} update-kubeconfig --name ${{ github.event.inputs.clustername }}
+        echo "Kubeconfig updated for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
+
+    # Destroy Deployment, seervice, and ingress using kubectl
+    - name: Destroy Deployment, service, and ingress using kubect
+      run: |
+        kubectl delete deployment quest
+        kubectl delete service quest-service
+        kubectl delete ingress quest-ingress
+        kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.3.1/deploy/static/provider/aws/deploy.yaml
+        echo "Deployment, service, and ingress destroyed"
+
+    # Delete ECR images using AWS CLI
+    - name: Delete ECR images using AWS CLI
+      run: |
+        IMAGE_DIGESTS=$(aws ecr list-images --repository-name ${{ github.event.inputs.ecr_repository_name }} --query 'imageIds[*].imageDigest' --output json --region ${{ github.event.inputs.region }} | jq -r '.[]')
+        # Loop through each image digest and delete it
+        for IMAGE_DIGEST in $IMAGE_DIGESTS; do
+          aws ecr batch-delete-image --repository-name ${{ github.event.inputs.ecr_repository_name }} --image-ids "[{\"imageDigest\":\"$IMAGE_DIGEST\"}]" --region ${{ github.event.inputs.region }}
+        done
+
+        echo "All images deleted from the repository: $REPO_NAME"
+    
+    # Delete the custom IAM Policy using AWS CLI
+    - name: Delete the custom IAM Policy using AWS CLI
+      run: |
+        account_id=$(aws sts get-caller-identity --query Account --output text)
+        policy_name="${{ github.event.inputs.clustername }}-AWSLoadBalancerControllerIAMPolicy"
+        aws iam delete-policy --policy-arn arn:aws:iam::$account_id:policy/${policy_name}
+        echo "Custom IAM Policy deleted"
+        
+    # Destroy ECR repository using Terraform
+    - name: Destroy ECR repository
+      working-directory: terraform/create_ecr
+      run: |
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf      
+        echo "Backend.tf file updated with required details for ecr repository destruction"
+        terraform init -reconfigure
+        terraform destroy -auto-approve -var="aws_region=${{ github.event.inputs.region }}" -var="ecr_repository_name=${{ github.event.inputs.ecr_repository_name }}"
+        echo "ECR repository destroyed"
+
+    # Destroy EKS Cluster using Terraform
+    - name: Destroy EKS Cluster
+      working-directory: terraform/create_eks
+      run: |
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
+        echo "Backend.tf file updated with required details for eks cluster destruction"
+        terraform init -reconfigure
+        terraform destroy -auto-approve -var="eks_cluster_name=${{ github.event.inputs.clustername }}" -var="aws_region=${{ github.event.inputs.region }}" -var="ssh_key_name=${{ github.event.inputs.keypair_name }}" -var="nodegroup_instance_types=[\"${{ github.event.inputs.instancetype }}\"]"
+        echo "EKS Cluster destroyed"
+
+    # Remove AWS credentials from the runner
+    - name: Remove AWS credentials from the runner
+      run: |
+        aws configure set aws_access_key_id ""
+        aws configure set aws_secret_access_key ""
+
+    # Notify Destruction Completion
+    - name: Notify destruction completion
+      run: echo "Destruction completed for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."

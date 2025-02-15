@@ -22,6 +22,7 @@ on:
       s3_bucket_name:
         description: 'Name of the S3 bucket for remote statefile storage:'
         required: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -84,25 +85,20 @@ jobs:
       with:
         terraform_version: latest
 
-    # Place holder In Bacend.tf file in ECR folder
-    - name: Place holder In Bacend.tf file
-      working-directory: terraform/create_ecr
-      run: | 
-        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
-        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
-        echo "Backend.tf file updated with region and cluster name"
-
     # Create ECR repository using Terraform
     - name: Create ECR repository
       working-directory: terraform/create_ecr
       run: |
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
+        echo "Backend.tf file updated with required values for ECR repository creation"
         terraform init
         terraform plan -var="aws_region=${{ github.event.inputs.region }}" -var="ecr_repository_name=${{ github.event.inputs.ecr_repository_name }}"
         terraform apply -auto-approve -var="aws_region=${{ github.event.inputs.region }}" -var="ecr_repository_name=${{ github.event.inputs.ecr_repository_name }}"
         echo "ECR repository created"
 
     # Build and push Docker image to ECR
-    - name: Build and push Docker image to ECR
+    - name: Build and Push Docker image to ECR
       working-directory: quest
       run: |
         account_id=$(aws sts get-caller-identity --query Account --output text)
@@ -114,18 +110,13 @@ jobs:
         sed -i "s|PLACEHOLDER_IMAGE_NAME|$account_id.dkr.ecr.${{ github.event.inputs.region }}.amazonaws.com/${{ github.event.inputs.ecr_repository_name }}:latest|g" deployment.yaml
         echo "Docker image built and pushed to ECR"
 
-    # Place holder In Bacend.tf file in EKS folder
-    - name: Place holder In Bacend.tf file
-      working-directory: terraform/create_eks
-      run: | 
-        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
-        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
-        echo "Backend.tf file updated with region and cluster name"
-
     # Create EKS Cluster using Terraform
     - name: Create EKS Cluster
       working-directory: terraform/create_eks
       run: |
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
+        echo "Backend.tf file updated with required values for EKS cluster creation"
         terraform init
         terraform plan -var="eks_cluster_name=${{ github.event.inputs.clustername }}" -var="aws_region=${{ github.event.inputs.region }}" -var="ssh_key_name=${{ github.event.inputs.keypair_name }}" -var="nodegroup_instance_types=[\"${{ github.event.inputs.instancetype }}\"]"
         terraform apply -auto-approve -var="eks_cluster_name=${{ github.event.inputs.clustername }}" -var="aws_region=${{ github.event.inputs.region }}" -var="ssh_key_name=${{ github.event.inputs.keypair_name }}" -var="nodegroup_instance_types=[\"${{ github.event.inputs.instancetype }}\"]"
@@ -138,7 +129,7 @@ jobs:
         echo "Kubeconfig updated for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
 
     # Install Helm charts for AWS LB Controller
-    - name: Install Helm charts for AWS LB Controller
+    - name: Install Helm charts for AWS LoadBalancer Controller
       working-directory: quest
       run: |
         # Update Placeholder values in the lb-controller-installation.sh
@@ -148,11 +139,10 @@ jobs:
         ./lb-controller-installation.sh
         echo "Successfully installed AWS Load Balancer Controller"
         
-    # Genarate Self signed SSL Certificate and Import to Certificate Manager
-    - name: Genarate Self signed SSL Certificate and Import to Certificate Manager
+    # Generates and imports self-signed SSL certificates into Amazon Certificate Manager(ACM)
+    - name: Generate and import self-signed SSL certificates into Amazon Certificate Manager(ACM)
       working-directory: quest
       run: |
-        # SSL Certificate Generation and Importing to ACM
         chmod +x ssl-certificate-generation.sh
         ./ssl-certificate-generation.sh ${{ github.event.inputs.region }}
         echo "SSL Certificate generated and imported to ACM"
