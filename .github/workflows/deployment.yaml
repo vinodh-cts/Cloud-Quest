@@ -1,0 +1,186 @@
+name: Cloud Quest Infrastructure and Application Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      clustername:
+        description: 'Name of the EKS cluster:'
+        required: true
+      region:
+        description: 'AWS region to deploy the cluster:'
+        required: true
+      keypair_name:
+        description: 'Name of the EC2 keypair to be used:'
+        required: true
+      instancetype:
+        description: 'Instance type for worker nodes (e.g.,"t3.medium", "t3.large"):'
+        required: true
+        default: 't3.small'
+      ecr_repository_name:
+        description: 'Name of the ECR repository:'
+        required: true
+      s3_bucket_name:
+        description: 'Name of the S3 bucket for remote statefile storage:'
+        required: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    # Checkout code
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Install AWS CLI
+    - name: Install AWS CLI
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+        aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws configure set region ${{ github.event.inputs.region }}
+        aws configure set output json
+
+    # Install eksctl
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/download/v0.76.0/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+
+    # Install kubectl
+    - name: Install kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/v1.24.0/bin/linux/amd64/kubectl"
+        sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+    # Install Helm
+    - name: Install Helm
+      run: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      
+    # Install Docker
+    - name: Install Docker
+      run: |
+        sudo apt-get update
+        sudo apt-get install ca-certificates curl
+        sudo install -m 0755 -d /etc/apt/keyrings
+        sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        sudo chmod a+r /etc/apt/keyrings/docker.asc
+        echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        sudo apt-get update
+        sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        sudo usermod -aG docker $USER
+
+    # Install Terraform
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: latest
+
+    # Place holder In Bacend.tf file in ECR folder
+    - name: Place holder In Bacend.tf file
+      working-directory: terraform/create_ecr
+      run: | 
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
+        echo "Backend.tf file updated with region and cluster name"
+
+    # Create ECR repository using Terraform
+    - name: Create ECR repository
+      working-directory: terraform/create_ecr
+      run: |
+        terraform init
+        terraform plan -var="aws_region=${{ github.event.inputs.region }}" -var="ecr_repository_name=${{ github.event.inputs.ecr_repository_name }}"
+        terraform apply -auto-approve -var="aws_region=${{ github.event.inputs.region }}" -var="ecr_repository_name=${{ github.event.inputs.ecr_repository_name }}"
+        echo "ECR repository created"
+
+    # Build and push Docker image to ECR
+    - name: Build and push Docker image to ECR
+      working-directory: quest
+      run: |
+        account_id=$(aws sts get-caller-identity --query Account --output text)
+        docker build -t ${{ github.event.inputs.ecr_repository_name }} .
+        docker tag ${{ github.event.inputs.ecr_repository_name }}:latest $account_id.dkr.ecr.${{ github.event.inputs.region }}.amazonaws.com/${{ github.event.inputs.ecr_repository_name }}:latest
+        aws ecr get-login-password --region ${{ github.event.inputs.region }} | docker login --username AWS --password-stdin $account_id.dkr.ecr.${{ github.event.inputs.region }}.amazonaws.com
+        docker push $account_id.dkr.ecr.${{ github.event.inputs.region }}.amazonaws.com/${{ github.event.inputs.ecr_repository_name }}:latest
+        # Update the deployment.yaml file with the new image name
+        sed -i "s|PLACEHOLDER_IMAGE_NAME|$account_id.dkr.ecr.${{ github.event.inputs.region }}.amazonaws.com/${{ github.event.inputs.ecr_repository_name }}:latest|g" deployment.yaml
+        echo "Docker image built and pushed to ECR"
+
+    # Place holder In Bacend.tf file in EKS folder
+    - name: Place holder In Bacend.tf file
+      working-directory: terraform/create_eks
+      run: | 
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" backend.tf
+        sed -i "s|PLACEHOLDER_S3_BUCKET_NAME|${{ github.event.inputs.s3_bucket_name }}|g" backend.tf
+        echo "Backend.tf file updated with region and cluster name"
+
+    # Create EKS Cluster using Terraform
+    - name: Create EKS Cluster
+      working-directory: terraform/create_eks
+      run: |
+        terraform init
+        terraform plan -var="eks_cluster_name=${{ github.event.inputs.clustername }}" -var="aws_region=${{ github.event.inputs.region }}" -var="ssh_key_name=${{ github.event.inputs.keypair_name }}" -var="nodegroup_instance_types=[\"${{ github.event.inputs.instancetype }}\"]"
+        terraform apply -auto-approve -var="eks_cluster_name=${{ github.event.inputs.clustername }}" -var="aws_region=${{ github.event.inputs.region }}" -var="ssh_key_name=${{ github.event.inputs.keypair_name }}" -var="nodegroup_instance_types=[\"${{ github.event.inputs.instancetype }}\"]"
+        echo "Deployment completed for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
+
+    # Update kubeconfig for kubectl interaction with the EKS cluster
+    - name: Configure kubectl for EKS
+      run: |
+        aws eks --region ${{ github.event.inputs.region }} update-kubeconfig --name ${{ github.event.inputs.clustername }}
+        echo "Kubeconfig updated for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
+
+    # Install Helm charts for AWS LB Controller
+    - name: Install Helm charts for AWS LB Controller
+      working-directory: quest
+      run: |
+        # Update Placeholder values in the lb-controller-installation.sh
+        sed -i "s|PLACEHOLDER_REGION|${{ github.event.inputs.region }}|g" lb-controller-installation.sh
+        sed -i "s|PLACEHOLDER_CLUSTER_NAME|${{ github.event.inputs.clustername }}|g" lb-controller-installation.sh
+        chmod +x lb-controller-installation.sh
+        ./lb-controller-installation.sh
+        echo "Successfully installed AWS Load Balancer Controller"
+        
+    # Genarate Self signed SSL Certificate and Import to Certificate Manager
+    - name: Genarate Self signed SSL Certificate and Import to Certificate Manager
+      working-directory: quest
+      run: |
+        # SSL Certificate Generation and Importing to ACM
+        chmod +x ssl-certificate-generation.sh
+        ./ssl-certificate-generation.sh ${{ github.event.inputs.region }}
+        echo "SSL Certificate generated and imported to ACM"
+
+    # Deploy Application, Service, and Ingress
+    - name: Deploy Application, Service, and Ingress
+      working-directory: quest
+      run: |
+        kubectl apply -f deployment.yaml
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.3.1/deploy/static/provider/aws/deploy.yaml
+        sleep 40
+        kubectl apply -f service.yaml
+        sleep 20
+        kubectl apply -f alb-ingress.yaml
+        echo "Application deployed successfully"
+
+    # Access the application using the ALB DNS name
+    - name: Access the application using the ALB via https url
+      run: |
+        app_url=$(kubectl get ingress quest-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "Application URL: https://${app_url}" 
+
+    # Remove AWS credentials from the runner
+    - name: Remove AWS credentials from the runner
+      run: |
+        aws configure set aws_access_key_id ""
+        aws configure set aws_secret_access_key ""
+
+    # Post-Deployment Steps (Optional)
+    - name: Notify completion
+      run: echo "Deployment completed for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
