@@ -52,7 +52,7 @@ Monitor costs associated with:
 | `keypair_name`     | EC2 key pair name                    | `test-quest` |
 | `instancetype`     | EC2 instance type for worker nodes   | `t3.small`    |
 | `ecr_repository_name` | Name of the ECR repository       | `quest`       |
-| `s3_bucket_name` | Name of the S3 bucket for remote statefile storage | `quest`       |
+| `s3_bucket_name` | Name of the S3 bucket for remote statefile storage | `quest-statefiles-bucket`       |
 
 
 ## Deployment Process
@@ -76,8 +76,8 @@ The workflow executes the following steps:
    - Updates the `deployment.yaml` file by replacing `PLACEHOLDER_IMAGE_ID` with the new image ID of the latest version.
 
 3. **EKS Cluster Deployment**
-   - Replaces `PLACEHOLDER_S3_BUCKET_NAME` and `PLACEHOLDER_CLUSTER_NAME` in `backend.tf` for managing the remote state file based on user input.
-   - Creates an EKS cluster with the state file stored in a remote S3 bucket using Terraform.
+   - Replaces `PLACEHOLDER_S3_BUCKET_NAME` and `PLACEHOLDER_CLUSTER_NAME` in `backend.tf` for managing the remote statefile based on user input.
+   - Creates an EKS cluster with the statefile stored in a remote S3 bucket using Terraform.
    - Configures access to the EKS cluster on local or CI/CD runner machines using kubectl for cluster management.
      
 4. **Configuring the Environment for Application Deployment with Bash Scripts**
