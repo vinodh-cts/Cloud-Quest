@@ -89,13 +89,6 @@ jobs:
 
         echo "All images deleted from the repository: $REPO_NAME"
     
-    # Delete the custom IAM Policy using AWS CLI
-    - name: Delete the custom IAM Policy using AWS CLI
-      run: |
-        account_id=$(aws sts get-caller-identity --query Account --output text)
-        policy_name="${{ github.event.inputs.clustername }}-AWSLoadBalancerControllerIAMPolicy"
-        aws iam delete-policy --policy-arn arn:aws:iam::$account_id:policy/${policy_name}
-        echo "Custom IAM Policy deleted"
         
     # Destroy ECR repository using Terraform
     - name: Destroy ECR repository
