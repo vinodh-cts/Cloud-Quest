@@ -78,15 +78,6 @@ jobs:
         aws eks --region ${{ github.event.inputs.region }} update-kubeconfig --name ${{ github.event.inputs.clustername }}
         echo "Kubeconfig updated for cluster ${{ github.event.inputs.clustername }} in region ${{ github.event.inputs.region }}."
 
-    # Destroy Deployment, seervice, and ingress using kubectl
-    - name: Destroy Deployment, service, and ingress using kubect
-      run: |
-        kubectl delete deployment quest
-        kubectl delete service quest-service
-        kubectl delete ingress quest-ingress
-        kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.3.1/deploy/static/provider/aws/deploy.yaml
-        echo "Deployment, service, and ingress destroyed"
-
     # Delete ECR images using AWS CLI
     - name: Delete ECR images using AWS CLI
       run: |
